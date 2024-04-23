@@ -112,6 +112,91 @@ def poe_loss(output, output_2, labels):
     return loss
 
 
+def poe_label_smoothing_loss(output, output_2, labels):
+    """Implements the poe & label smoothing loss."""
+    alpha = args.smooth_alpha
+    N = output.size(0)  # batch_size
+    C = output.size(1)  # number of classes
+    smoothed_labels = torch.full(size=(N, C), fill_value=alpha / (C - 1)).cuda()
+    smoothed_labels.scatter_(dim=1, index=torch.unsqueeze(labels, dim=1), value=1 - alpha)
+
+    # log_prob = torch.nn.functional.log_softmax(outputs, dim=1)
+    # loss = -torch.sum(log_prob * smoothed_labels) / N
+
+    pt = F.softmax(output, dim=1)
+    # pt_2 = F.softmax(output_2 / args.temperature, dim=1)
+    pt_2 = F.softmax(output_2, dim=1)
+    joint_pt = F.log_softmax((torch.log(pt) + torch.log(pt_2)), dim=1)
+    # joint_p = joint_pt.gather(1, labels.view(-1, 1))
+    # batch_loss = -torch.log(joint_p)
+    batch_loss = -joint_pt * smoothed_labels
+    # bias_p = F.softmax(output_2, dim=1)
+    # bias_p = bias_p.gather(1, labels.view(-1, 1))
+    # bias_loss = -torch.log(bias_p)
+    if args.do_reweight:
+        logits_1 = F.softmax(output, dim=1)
+        logits_1 = logits_1.gather(1, labels.view(-1, 1))
+        logits_2 = F.softmax(output_2, dim=1)
+        logits_2 = logits_2.gather(1, labels.view(-1, 1))
+        weight_main = torch.where(logits_2 > args.reweight_threshold, 1.0 - logits_2, 1.0)
+        # weight_bias = torch.where(logits_1 < 0.5, logits_1, 1.0)
+        # batch_loss = batch_loss * weight_main + bias_loss * weight_bias
+        batch_loss = batch_loss * weight_main
+    else:
+        # batch_loss = batch_loss + bias_loss
+        batch_loss = batch_loss
+    loss = torch.sum(batch_loss) / N
+    return loss
+
+
+def poe_SCE_loss(output, output_2, labels):
+    pt = F.softmax(output, dim=1)
+    pt_2 = F.softmax(output_2 / args.temperature, dim=1)
+    pred = F.softmax((torch.log(pt) + torch.log(pt_2)), dim=1)
+    pred = pred.gather(1, labels.view(-1, 1))
+
+    # CCE
+    ce = -torch.log(pred).mean()
+
+    # RCE
+    pred = F.softmax(pred, dim=1)
+    pred = torch.clamp(pred, min=1e-7, max=1.0)
+    label_one_hot = torch.nn.functional.one_hot(labels, 4 if data_selected == 'ag' else 2).float().cuda()
+    label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
+    rce = (-1 * torch.sum(pred * torch.log(label_one_hot), dim=1))
+
+    # Loss
+    loss = args.sce_alpha * ce + args.sce_beta * rce.mean()
+
+    return loss
+
+
+def poe_SCE_reweight_loss(output, output_2, labels):
+    logits_2 = F.softmax(output_2, dim=1)
+    logits_2 = logits_2.gather(1, labels.view(-1, 1))
+    weight_main = torch.where(logits_2 > args.reweight_threshold, 1.0 - logits_2, 1.0)
+
+    # CE loss
+    pt = F.softmax(output, dim=1)
+    pt_2 = F.softmax(output_2 / args.temperature, dim=1)
+    joint_pt = F.softmax((torch.log(pt) + torch.log(pt_2)), dim=1)
+    joint_p = joint_pt.gather(1, labels.view(-1, 1))
+    ce = -torch.log(joint_p)
+
+    # RCE
+    # pred = F.softmax((torch.log(pt) + torch.log(pt_2)), dim=1)
+    pred = F.softmax((torch.log(pt)), dim=1)  # only use the logits of the main model, reverse CE
+    pred = torch.clamp(pred, min=1e-7, max=1.0)
+    label_one_hot = torch.nn.functional.one_hot(labels, 4 if data_selected == 'ag' else 2).float().cuda()
+    label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
+    rce = -1 * pred * torch.log(label_one_hot)
+
+    loss = (args.sce_alpha * ce + args.sce_beta * rce) * weight_main
+    loss = loss.mean()
+
+    return loss
+
+
 def kl_loss(p, q):
     p_loss = F.kl_div(F.log_softmax(p, dim=-1), F.softmax(q, dim=-1), reduction='none')
     q_loss = F.kl_div(F.log_softmax(q, dim=-1), F.softmax(p, dim=-1), reduction='none')
