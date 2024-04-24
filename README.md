@@ -28,10 +28,10 @@ bash run_train.sh
 
 ## Citation
 ```
-@article{liu2023shortcuts,
+@inproceedings{liu2023shortcuts,
   title={From shortcuts to triggers: Backdoor defense with denoised poe},
   author={Liu, Qin and Wang, Fei and Xiao, Chaowei and Chen, Muhao},
-  journal={arXiv preprint arXiv:2305.14910},
-  year={2023}
+  booktitle={NAACL},
+  year={2024}
 }
 ```
