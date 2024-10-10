@@ -13,7 +13,7 @@ do
     for ra in 3.0
     do
 
-python poe_not_fix_rdrop.py \
+python train_w_dpoe.py \
   --data $data \
   --poison_data_path $poison_path \
   --clean_data_path $clean_path \
